@@ -1,0 +1,7 @@
+// Xcode Signing 설정 예시
+// 1. 이 파일을 Release.xcconfig 로 복사
+// 2. DEVELOPMENT_TEAM 에 Apple Developer Team ID 입력
+//    (developer.apple.com → Membership → Team ID)
+
+DEVELOPMENT_TEAM = YOUR_TEAM_ID_HERE
+CODE_SIGN_STYLE = Automatic

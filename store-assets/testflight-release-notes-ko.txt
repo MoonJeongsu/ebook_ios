@@ -1,0 +1,8 @@
+무료 한국문학집 iOS 첫 TestFlight 빌드입니다.
+
+- Firestore 작가/작품 목록
+- 작가명·작품명 검색
+- Firebase Storage txt 다운로드 및 읽기
+- 내 서재 및 읽기 진행 위치 저장
+
+테스트 시 네트워크 연결이 필요합니다.
