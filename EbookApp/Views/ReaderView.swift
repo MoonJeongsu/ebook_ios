@@ -6,7 +6,7 @@ struct ReaderView: View {
     let onBack: () -> Void
 
     @State private var visibleItemIndex = 0
-    @State private var hasRestoredScroll = false
+    @State private var visibleItemMinY: CGFloat = 0
 
     var body: some View {
         Group {
@@ -18,66 +18,23 @@ struct ReaderView: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 12) {
-                            VStack(spacing: 8) {
-                                Text(viewModel.uiState.title)
-                                    .font(.title2.bold())
-                                    .multilineTextAlignment(.center)
-                                    .frame(maxWidth: .infinity)
-
-                                Text(viewModel.uiState.author)
-                                    .font(.title3)
-                                    .foregroundStyle(AppTheme.secondary)
-                                    .multilineTextAlignment(.center)
-                                    .frame(maxWidth: .infinity)
-                            }
-                            .padding(.bottom, 12)
-                            .id("header")
+                            headerSection
+                                .trackVisibleItem(index: 0)
 
                             ForEach(Array(viewModel.uiState.paragraphs.enumerated()), id: \.offset) { index, paragraph in
-                                Group {
-                                    if paragraph.isEmpty {
-                                        Text("")
-                                            .padding(.bottom, 4)
-                                    } else {
-                                        Text(paragraph)
-                                            .font(.system(size: 18))
-                                            .lineSpacing(8)
-                                            .frame(maxWidth: .infinity, alignment: .leading)
-                                    }
-                                }
-                                .id(index)
-                                .background(
-                                    GeometryReader { geometry in
-                                        Color.clear.preference(
-                                            key: VisibleParagraphPreferenceKey.self,
-                                            value: geometry.frame(in: .named("readerScroll")).minY <= 120
-                                                ? index
-                                                : nil
-                                        )
-                                    }
-                                )
+                                paragraphView(paragraph)
+                                    .trackVisibleItem(index: index + 1)
                             }
                         }
                         .padding(.horizontal, 20)
                         .padding(.vertical, 12)
                     }
                     .coordinateSpace(name: "readerScroll")
-                    .onPreferenceChange(VisibleParagraphPreferenceKey.self) { index in
-                        if let index {
-                            visibleItemIndex = index + 1
-                        }
+                    .onPreferenceChange(VisibleItemPositionsKey.self) { positions in
+                        updateVisibleItem(from: positions)
                     }
-                    .onAppear {
-                        guard !hasRestoredScroll else { return }
-                        hasRestoredScroll = true
-                        let targetIndex = min(
-                            max(viewModel.uiState.initialItemIndex, 0),
-                            viewModel.uiState.paragraphs.count
-                        )
-                        DispatchQueue.main.async {
-                            proxy.scrollTo(targetIndex == 0 ? AnyHashable("header") : AnyHashable(targetIndex - 1), anchor: .top)
-                        }
-                        visibleItemIndex = targetIndex
+                    .task(id: restoreTaskID) {
+                        await restoreScrollPosition(using: proxy)
                     }
                 }
             }
@@ -103,6 +60,74 @@ struct ReaderView: View {
         .background(AppTheme.background)
     }
 
+    private var headerSection: some View {
+        VStack(spacing: 8) {
+            Text(viewModel.uiState.title)
+                .font(.title2.bold())
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
+
+            Text(viewModel.uiState.author)
+                .font(.title3)
+                .foregroundStyle(AppTheme.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
+        }
+        .padding(.bottom, 12)
+        .id(0)
+    }
+
+    @ViewBuilder
+    private func paragraphView(_ paragraph: String) -> some View {
+        Group {
+            if paragraph.isEmpty {
+                Text("")
+                    .padding(.bottom, 4)
+            } else {
+                Text(paragraph)
+                    .font(.system(size: 18))
+                    .lineSpacing(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    private var restoreTaskID: String {
+        [
+            viewModel.uiState.bookId,
+            String(viewModel.uiState.paragraphs.count),
+            String(viewModel.uiState.initialItemIndex),
+            String(viewModel.uiState.initialScrollOffset),
+        ].joined(separator: "|")
+    }
+
+    @MainActor
+    private func restoreScrollPosition(using proxy: ScrollViewProxy) async {
+        guard !viewModel.uiState.paragraphs.isEmpty else { return }
+
+        let maxIndex = viewModel.uiState.paragraphs.count
+        let targetIndex = min(max(viewModel.uiState.initialItemIndex, 0), maxIndex)
+        visibleItemIndex = targetIndex
+
+        for attempt in 0..<6 {
+            if attempt > 0 {
+                try? await Task.sleep(nanoseconds: UInt64(50_000_000 * attempt))
+            }
+            proxy.scrollTo(targetIndex, anchor: .top)
+        }
+    }
+
+    private func updateVisibleItem(from positions: [Int: CGFloat]) {
+        guard !positions.isEmpty else { return }
+
+        let topThreshold: CGFloat = 140
+        let candidates = positions.filter { $0.value <= topThreshold }
+        guard let best = candidates.max(by: { $0.value < $1.value }) else { return }
+
+        visibleItemIndex = best.key
+        visibleItemMinY = best.value
+    }
+
     private func saveProgressAndBack() {
         saveProgressIfNeeded()
         onBack()
@@ -110,20 +135,34 @@ struct ReaderView: View {
 
     private func saveProgressIfNeeded() {
         guard !viewModel.uiState.bookId.isEmpty, !viewModel.uiState.paragraphs.isEmpty else { return }
+
+        let scrollOffset = Int(-visibleItemMinY.rounded())
         viewModel.saveProgress(
             bookId: viewModel.uiState.bookId,
             itemIndex: visibleItemIndex,
-            scrollOffset: 0
+            scrollOffset: max(scrollOffset, 0)
         )
     }
 }
 
-private struct VisibleParagraphPreferenceKey: PreferenceKey {
-    static var defaultValue: Int?
+private struct VisibleItemPositionsKey: PreferenceKey {
+    static var defaultValue: [Int: CGFloat] = [:]
 
-    static func reduce(value: inout Int?, nextValue: () -> Int?) {
-        if let next = nextValue() {
-            value = next
+    static func reduce(value: inout [Int: CGFloat], nextValue: () -> [Int: CGFloat]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    }
+}
+
+private extension View {
+    func trackVisibleItem(index: Int) -> some View {
+        background {
+            GeometryReader { geometry in
+                Color.clear.preference(
+                    key: VisibleItemPositionsKey.self,
+                    value: [index: geometry.frame(in: .named("readerScroll")).minY]
+                )
+            }
         }
+        .id(index)
     }
 }
