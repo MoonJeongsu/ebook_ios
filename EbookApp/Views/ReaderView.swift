@@ -75,7 +75,7 @@ struct ReaderView: View {
                             viewModel.uiState.paragraphs.count
                         )
                         DispatchQueue.main.async {
-                            proxy.scrollTo(targetIndex == 0 ? "header" : targetIndex - 1, anchor: .top)
+                            proxy.scrollTo(targetIndex == 0 ? AnyHashable("header") : AnyHashable(targetIndex - 1), anchor: .top)
                         }
                         visibleItemIndex = targetIndex
                     }

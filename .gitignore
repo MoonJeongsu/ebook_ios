@@ -6,3 +6,4 @@ xcuserdata/
 *.ipa
 *.dSYM.zip
 Config/Release.xcconfig
+build-archive/

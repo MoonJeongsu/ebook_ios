@@ -23,7 +23,7 @@ final class ReaderViewModel: ObservableObject {
     }
 
     func openBook(_ book: Book) async {
-        uiState = ReaderUiState(isLoading: true, title: book.title, author: book.author)
+        uiState = ReaderUiState(title: book.title, author: book.author, isLoading: true)
 
         do {
             try await container.ensureCatalogLoaded()
